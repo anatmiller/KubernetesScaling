@@ -25,6 +25,7 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
+
 	appsv1 "k8s.io/api/apps/v1"
 	apiv1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -68,6 +69,8 @@ var (
 	}
 	testDaemonSets = []*appsv1.DaemonSet{ds1, ds2, ds3}
 )
+
+// TODO(DRA): Add DRA-specific test cases.
 
 func TestTemplateNodeInfoFromNodeGroupTemplate(t *testing.T) {
 	exampleNode := BuildTestNode("n", 1000, 10)
@@ -314,7 +317,10 @@ func TestFreshNodeInfoFromTemplateNodeInfo(t *testing.T) {
 	templateNodeInfo := framework.NewNodeInfo(templateNode, nil, pods...)
 
 	suffix := "abc"
-	freshNodeInfo := FreshNodeInfoFromTemplateNodeInfo(templateNodeInfo, suffix)
+	freshNodeInfo, err := FreshNodeInfoFromTemplateNodeInfo(templateNodeInfo, suffix)
+	if err != nil {
+		t.Fatalf("FreshNodeInfoFromTemplateNodeInfo(): want nil error, got %v", err)
+	}
 	// Verify that the taints are not sanitized (they should be sanitized in the template already).
 	// Verify that the NodeInfo is sanitized using the template Node name as base.
 	initialTaints := templateNodeInfo.Node().Spec.Taints
@@ -392,7 +398,10 @@ func TestSanitizeNodeInfo(t *testing.T) {
 		t.Run(tc.testName, func(t *testing.T) {
 			newNameBase := "node"
 			suffix := "abc"
-			sanitizedNodeInfo := sanitizeNodeInfo(tc.nodeInfo, newNameBase, suffix, tc.taintConfig)
+			sanitizedNodeInfo, err := sanitizeNodeInfo(tc.nodeInfo, newNameBase, suffix, tc.taintConfig)
+			if err != nil {
+				t.Fatalf("sanitizeNodeInfo(): want nil error, got %v", err)
+			}
 			if err := verifyNodeInfoSanitization(tc.nodeInfo, sanitizedNodeInfo, nil, newNameBase, suffix, tc.wantTaints); err != nil {
 				t.Fatalf("sanitizeNodeInfo(): NodeInfo wasn't properly sanitized: %v", err)
 			}
