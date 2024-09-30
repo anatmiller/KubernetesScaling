@@ -27,7 +27,6 @@ import (
 	"k8s.io/autoscaler/cluster-autoscaler/context"
 	"k8s.io/autoscaler/cluster-autoscaler/core/scaleup/equivalence"
 	"k8s.io/autoscaler/cluster-autoscaler/core/scaleup/resource"
-	"k8s.io/autoscaler/cluster-autoscaler/core/utils"
 	"k8s.io/autoscaler/cluster-autoscaler/estimator"
 	"k8s.io/autoscaler/cluster-autoscaler/expander"
 	"k8s.io/autoscaler/cluster-autoscaler/metrics"
@@ -35,6 +34,7 @@ import (
 	"k8s.io/autoscaler/cluster-autoscaler/processors/nodegroups"
 	"k8s.io/autoscaler/cluster-autoscaler/processors/nodegroupset"
 	"k8s.io/autoscaler/cluster-autoscaler/processors/status"
+	"k8s.io/autoscaler/cluster-autoscaler/simulator"
 	"k8s.io/autoscaler/cluster-autoscaler/simulator/framework"
 	"k8s.io/autoscaler/cluster-autoscaler/utils/errors"
 	"k8s.io/autoscaler/cluster-autoscaler/utils/klogx"
@@ -465,7 +465,6 @@ func (o *ScaleUpOrchestrator) ComputeExpansionOption(
 
 	estimateStart := time.Now()
 	expansionEstimator := o.estimatorBuilder(
-		o.autoscalingContext.PredicateChecker,
 		o.autoscalingContext.ClusterSnapshot,
 		estimator.NewEstimationContext(o.autoscalingContext.MaxNodesTotal, option.SimilarNodeGroups, currentNodeCount),
 	)
@@ -527,7 +526,7 @@ func (o *ScaleUpOrchestrator) CreateNodeGroup(
 
 	// If possible replace candidate node-info with node info based on crated node group. The latter
 	// one should be more in line with nodes which will be created by node group.
-	mainCreatedNodeInfo, aErr := utils.GetNodeInfoFromTemplate(createNodeGroupResult.MainCreatedNodeGroup, daemonSets, o.taintConfig)
+	mainCreatedNodeInfo, aErr := simulator.TemplateNodeInfoFromNodeGroupTemplate(createNodeGroupResult.MainCreatedNodeGroup, daemonSets, o.taintConfig)
 	if aErr == nil {
 		nodeInfos[createNodeGroupResult.MainCreatedNodeGroup.Id()] = mainCreatedNodeInfo
 		schedulablePodGroups[createNodeGroupResult.MainCreatedNodeGroup.Id()] = o.SchedulablePodGroups(podEquivalenceGroups, createNodeGroupResult.MainCreatedNodeGroup, mainCreatedNodeInfo)
@@ -542,7 +541,7 @@ func (o *ScaleUpOrchestrator) CreateNodeGroup(
 		delete(schedulablePodGroups, oldId)
 	}
 	for _, nodeGroup := range createNodeGroupResult.ExtraCreatedNodeGroups {
-		nodeInfo, aErr := utils.GetNodeInfoFromTemplate(nodeGroup, daemonSets, o.taintConfig)
+		nodeInfo, aErr := simulator.TemplateNodeInfoFromNodeGroupTemplate(nodeGroup, daemonSets, o.taintConfig)
 		if aErr != nil {
 			klog.Warningf("Cannot build node info for newly created extra node group %v; balancing similar node groups will not work; err=%v", nodeGroup.Id(), aErr)
 			continue
@@ -577,7 +576,7 @@ func (o *ScaleUpOrchestrator) SchedulablePodGroups(
 	var schedulablePodGroups []estimator.PodEquivalenceGroup
 	for _, eg := range podEquivalenceGroups {
 		samplePod := eg.Pods[0]
-		if err := o.autoscalingContext.PredicateChecker.CheckPredicates(o.autoscalingContext.ClusterSnapshot, samplePod, nodeInfo.Node().Name); err == nil {
+		if err := o.autoscalingContext.ClusterSnapshot.CheckPredicates(samplePod, nodeInfo.Node().Name); err == nil {
 			// Add pods to option.
 			schedulablePodGroups = append(schedulablePodGroups, estimator.PodEquivalenceGroup{
 				Pods: eg.Pods,
@@ -586,7 +585,7 @@ func (o *ScaleUpOrchestrator) SchedulablePodGroups(
 			eg.Schedulable = true
 			eg.SchedulableGroups = append(eg.SchedulableGroups, nodeGroup.Id())
 		} else {
-			klog.V(2).Infof("Pod %s/%s can't be scheduled on %s, predicate checking error: %v", samplePod.Namespace, samplePod.Name, nodeGroup.Id(), err.VerboseMessage())
+			klog.V(2).Infof("Pod %s/%s can't be scheduled on %s, predicate checking error: %v", samplePod.Namespace, samplePod.Name, nodeGroup.Id(), err)
 			if podCount := len(eg.Pods); podCount > 1 {
 				klog.V(2).Infof("%d other pods similar to %s can't be scheduled on %s", podCount-1, samplePod.Name, nodeGroup.Id())
 			}
