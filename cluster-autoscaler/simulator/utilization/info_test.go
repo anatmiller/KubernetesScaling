@@ -32,6 +32,8 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+// TODO(DRA): Add DRA-specific test cases.
+
 func TestCalculate(t *testing.T) {
 	testTime := time.Date(2020, time.December, 18, 17, 0, 0, 0, time.UTC)
 	pod := BuildTestPod("p1", 100, 200000)
@@ -79,7 +81,7 @@ func TestCalculate(t *testing.T) {
 	nodeInfo := framework.NewTestNodeInfo(node, pod, pod, pod2)
 
 	gpuConfig := getGpuConfigFromNode(nodeInfo.Node())
-	utilInfo, err := Calculate(nodeInfo, false, false, gpuConfig, testTime)
+	utilInfo, err := Calculate(nodeInfo, false, false, false, gpuConfig, testTime)
 	assert.NoError(t, err)
 	assert.InEpsilon(t, 2.0/10, utilInfo.Utilization, 0.01)
 	assert.Equal(t, 0.1, utilInfo.CpuUtil)
@@ -88,7 +90,7 @@ func TestCalculate(t *testing.T) {
 	nodeInfo = framework.NewTestNodeInfo(node2, pod, pod, pod2)
 
 	gpuConfig = getGpuConfigFromNode(nodeInfo.Node())
-	_, err = Calculate(nodeInfo, false, false, gpuConfig, testTime)
+	_, err = Calculate(nodeInfo, false, false, false, gpuConfig, testTime)
 	assert.Error(t, err)
 
 	node3 := BuildTestNode("node3", 2000, 2000000)
@@ -96,7 +98,7 @@ func TestCalculate(t *testing.T) {
 	nodeInfo = framework.NewTestNodeInfo(node3, pod, podWithInitContainers, podWithLargeNonRestartableInitContainers)
 
 	gpuConfig = getGpuConfigFromNode(nodeInfo.Node())
-	utilInfo, err = Calculate(nodeInfo, false, false, gpuConfig, testTime)
+	utilInfo, err = Calculate(nodeInfo, false, false, false, gpuConfig, testTime)
 	assert.NoError(t, err)
 	assert.InEpsilon(t, 50.25, utilInfo.Utilization, 0.01)
 	assert.InEpsilon(t, 25.125, utilInfo.CpuUtil, 0.005)
@@ -110,13 +112,13 @@ func TestCalculate(t *testing.T) {
 
 	nodeInfo = framework.NewTestNodeInfo(node, pod, pod, pod2, daemonSetPod3, daemonSetPod4)
 	gpuConfig = getGpuConfigFromNode(nodeInfo.Node())
-	utilInfo, err = Calculate(nodeInfo, true, false, gpuConfig, testTime)
+	utilInfo, err = Calculate(nodeInfo, true, false, false, gpuConfig, testTime)
 	assert.NoError(t, err)
 	assert.InEpsilon(t, 2.5/10, utilInfo.Utilization, 0.01)
 
 	nodeInfo = framework.NewTestNodeInfo(node, pod, pod2, daemonSetPod3)
 	gpuConfig = getGpuConfigFromNode(nodeInfo.Node())
-	utilInfo, err = Calculate(nodeInfo, false, false, gpuConfig, testTime)
+	utilInfo, err = Calculate(nodeInfo, false, false, false, gpuConfig, testTime)
 	assert.NoError(t, err)
 	assert.InEpsilon(t, 2.0/10, utilInfo.Utilization, 0.01)
 
@@ -124,7 +126,7 @@ func TestCalculate(t *testing.T) {
 	terminatedPod.DeletionTimestamp = &metav1.Time{Time: testTime.Add(-10 * time.Minute)}
 	nodeInfo = framework.NewTestNodeInfo(node, pod, pod, pod2, terminatedPod)
 	gpuConfig = getGpuConfigFromNode(nodeInfo.Node())
-	utilInfo, err = Calculate(nodeInfo, false, false, gpuConfig, testTime)
+	utilInfo, err = Calculate(nodeInfo, false, false, false, gpuConfig, testTime)
 	assert.NoError(t, err)
 	assert.InEpsilon(t, 2.0/10, utilInfo.Utilization, 0.01)
 
@@ -135,19 +137,19 @@ func TestCalculate(t *testing.T) {
 
 	nodeInfo = framework.NewTestNodeInfo(node, pod, pod, pod2, mirrorPod)
 	gpuConfig = getGpuConfigFromNode(nodeInfo.Node())
-	utilInfo, err = Calculate(nodeInfo, false, true, gpuConfig, testTime)
+	utilInfo, err = Calculate(nodeInfo, false, true, false, gpuConfig, testTime)
 	assert.NoError(t, err)
 	assert.InEpsilon(t, 2.0/9.0, utilInfo.Utilization, 0.01)
 
 	nodeInfo = framework.NewTestNodeInfo(node, pod, pod2, mirrorPod)
 	gpuConfig = getGpuConfigFromNode(nodeInfo.Node())
-	utilInfo, err = Calculate(nodeInfo, false, false, gpuConfig, testTime)
+	utilInfo, err = Calculate(nodeInfo, false, false, false, gpuConfig, testTime)
 	assert.NoError(t, err)
 	assert.InEpsilon(t, 2.0/10, utilInfo.Utilization, 0.01)
 
 	nodeInfo = framework.NewTestNodeInfo(node, pod, mirrorPod, daemonSetPod3)
 	gpuConfig = getGpuConfigFromNode(nodeInfo.Node())
-	utilInfo, err = Calculate(nodeInfo, true, true, gpuConfig, testTime)
+	utilInfo, err = Calculate(nodeInfo, true, true, false, gpuConfig, testTime)
 	assert.NoError(t, err)
 	assert.InEpsilon(t, 1.0/8.0, utilInfo.Utilization, 0.01)
 
@@ -158,7 +160,7 @@ func TestCalculate(t *testing.T) {
 	TolerateGpuForPod(gpuPod)
 	nodeInfo = framework.NewTestNodeInfo(gpuNode, pod, pod, gpuPod)
 	gpuConfig = getGpuConfigFromNode(nodeInfo.Node())
-	utilInfo, err = Calculate(nodeInfo, false, false, gpuConfig, testTime)
+	utilInfo, err = Calculate(nodeInfo, false, false, false, gpuConfig, testTime)
 	assert.NoError(t, err)
 	assert.InEpsilon(t, 1/1, utilInfo.Utilization, 0.01)
 
@@ -167,7 +169,7 @@ func TestCalculate(t *testing.T) {
 	AddGpuLabelToNode(gpuNode)
 	nodeInfo = framework.NewTestNodeInfo(gpuNode, pod, pod)
 	gpuConfig = getGpuConfigFromNode(nodeInfo.Node())
-	utilInfo, err = Calculate(nodeInfo, false, false, gpuConfig, testTime)
+	utilInfo, err = Calculate(nodeInfo, false, false, false, gpuConfig, testTime)
 	assert.NoError(t, err)
 	assert.Zero(t, utilInfo.Utilization)
 }
