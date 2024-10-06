@@ -23,7 +23,7 @@ import (
 	apiv1 "k8s.io/api/core/v1"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/autoscaler/cluster-autoscaler/apis/provisioningrequest/autoscaling.x-k8s.io/v1beta1"
+	v1 "k8s.io/autoscaler/cluster-autoscaler/apis/provisioningrequest/autoscaling.x-k8s.io/v1"
 	"k8s.io/autoscaler/cluster-autoscaler/context"
 	"k8s.io/autoscaler/cluster-autoscaler/provisioningrequest"
 	"k8s.io/autoscaler/cluster-autoscaler/provisioningrequest/conditions"
@@ -33,13 +33,15 @@ import (
 	"k8s.io/autoscaler/cluster-autoscaler/simulator/clustersnapshot"
 	"k8s.io/autoscaler/cluster-autoscaler/simulator/predicatechecker"
 	"k8s.io/autoscaler/cluster-autoscaler/simulator/scheduling"
+	"k8s.io/autoscaler/cluster-autoscaler/utils/klogx"
 	"k8s.io/klog/v2"
 	"k8s.io/kubernetes/pkg/scheduler/framework"
 )
 
 const (
-	defaultReservationTime = 10 * time.Minute
-	defaultExpirationTime  = 7 * 24 * time.Hour // 7 days
+	defaultReservationTime    = 10 * time.Minute
+	defaultExpirationTime     = 7 * 24 * time.Hour // 7 days
+	defaultTerminalProvReqTTL = 7 * 24 * time.Hour // 7 days
 	// defaultMaxUpdated is a limit for ProvisioningRequest to update conditions in one ClusterAutoscaler loop.
 	defaultMaxUpdated = 20
 )
@@ -87,10 +89,10 @@ func (p *provReqProcessor) refresh(provReqs []*provreqwrapper.ProvisioningReques
 			continue
 		}
 		conditions := provReq.Status.Conditions
-		if apimeta.IsStatusConditionTrue(conditions, v1beta1.BookingExpired) || apimeta.IsStatusConditionTrue(conditions, v1beta1.Failed) {
+		if apimeta.IsStatusConditionTrue(conditions, v1.BookingExpired) || apimeta.IsStatusConditionTrue(conditions, v1.Failed) {
 			continue
 		}
-		provisioned := apimeta.FindStatusCondition(conditions, v1beta1.Provisioned)
+		provisioned := apimeta.FindStatusCondition(conditions, v1.Provisioned)
 		if provisioned != nil && provisioned.Status == metav1.ConditionTrue {
 			if provisioned.LastTransitionTime.Add(defaultReservationTime).Before(p.now()) {
 				expiredProvReq = append(expiredProvReq, provReq)
@@ -103,7 +105,7 @@ func (p *provReqProcessor) refresh(provReqs []*provreqwrapper.ProvisioningReques
 		}
 	}
 	for _, provReq := range expiredProvReq {
-		conditions.AddOrUpdateCondition(provReq, v1beta1.BookingExpired, metav1.ConditionTrue, conditions.CapacityReservationTimeExpiredReason, conditions.CapacityReservationTimeExpiredMsg, metav1.NewTime(p.now()))
+		conditions.AddOrUpdateCondition(provReq, v1.BookingExpired, metav1.ConditionTrue, conditions.CapacityReservationTimeExpiredReason, conditions.CapacityReservationTimeExpiredMsg, metav1.NewTime(p.now()))
 		_, updErr := p.client.UpdateProvisioningRequest(provReq.ProvisioningRequest)
 		if updErr != nil {
 			klog.Errorf("failed to add BookingExpired condition to ProvReq %s/%s, err: %v", provReq.Namespace, provReq.Name, updErr)
@@ -111,13 +113,14 @@ func (p *provReqProcessor) refresh(provReqs []*provreqwrapper.ProvisioningReques
 		}
 	}
 	for _, provReq := range failedProvReq {
-		conditions.AddOrUpdateCondition(provReq, v1beta1.Failed, metav1.ConditionTrue, conditions.ExpiredReason, conditions.ExpiredMsg, metav1.NewTime(p.now()))
+		conditions.AddOrUpdateCondition(provReq, v1.Failed, metav1.ConditionTrue, conditions.ExpiredReason, conditions.ExpiredMsg, metav1.NewTime(p.now()))
 		_, updErr := p.client.UpdateProvisioningRequest(provReq.ProvisioningRequest)
 		if updErr != nil {
 			klog.Errorf("failed to add Failed condition to ProvReq %s/%s, err: %v", provReq.Namespace, provReq.Name, updErr)
 			continue
 		}
 	}
+	p.DeleteOldProvReqs(provReqs)
 }
 
 // CleanUp cleans up internal state
@@ -150,7 +153,7 @@ func (p *provReqProcessor) bookCapacity(ctx *context.AutoscalingContext) error {
 			// ClusterAutoscaler was able to create pods before, so we shouldn't have error here.
 			// If there is an error, mark PR as invalid, because we won't be able to book capacity
 			// for it anyway.
-			conditions.AddOrUpdateCondition(provReq, v1beta1.Failed, metav1.ConditionTrue, conditions.FailedToBookCapacityReason, fmt.Sprintf("Couldn't create pods, err: %v", err), metav1.Now())
+			conditions.AddOrUpdateCondition(provReq, v1.Failed, metav1.ConditionTrue, conditions.FailedToBookCapacityReason, fmt.Sprintf("Couldn't create pods, err: %v", err), metav1.Now())
 			if _, err := p.client.UpdateProvisioningRequest(provReq.ProvisioningRequest); err != nil {
 				klog.Errorf("failed to add Accepted condition to ProvReq %s/%s, err: %v", provReq.Namespace, provReq.Name, err)
 			}
@@ -166,4 +169,22 @@ func (p *provReqProcessor) bookCapacity(ctx *context.AutoscalingContext) error {
 		return err
 	}
 	return nil
+}
+
+// DeleteOldProvReqs delete ProvReq that have terminal state (Provisioned/Failed == True) more than a week.
+func (p *provReqProcessor) DeleteOldProvReqs(provReqs []*provreqwrapper.ProvisioningRequest) {
+	provReqQuota := klogx.NewLoggingQuota(30)
+	for _, provReq := range provReqs {
+		conditions := provReq.Status.Conditions
+		provisioned := apimeta.FindStatusCondition(conditions, v1.Provisioned)
+		failed := apimeta.FindStatusCondition(conditions, v1.Failed)
+		if provisioned != nil && provisioned.LastTransitionTime.Add(defaultTerminalProvReqTTL).Before(p.now()) ||
+			failed != nil && failed.LastTransitionTime.Add(defaultTerminalProvReqTTL).Before(p.now()) {
+			klogx.V(4).UpTo(provReqQuota).Infof("Delete old ProvisioningRequest %s/%s", provReq.Namespace, provReq.Name)
+			err := p.client.DeleteProvisioningRequest(provReq.ProvisioningRequest)
+			if err != nil {
+				klog.Warningf("Couldn't delete old %s/%s Provisioning Request, err: %v", provReq.Namespace, provReq.Name, err)
+			}
+		}
+	}
 }

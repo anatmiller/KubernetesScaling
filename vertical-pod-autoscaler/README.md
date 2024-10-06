@@ -24,6 +24,7 @@
   - [Using CPU management with static policy](#using-cpu-management-with-static-policy)
   - [Controlling eviction behavior based on scaling direction and resource](#controlling-eviction-behavior-based-on-scaling-direction-and-resource)
   - [Limiting which namespaces are used](#limiting-which-namespaces-are-used)
+  - [Setting the webhook failurePolicy](#setting-the-webhook-failurepolicy)
 - [Known limitations](#known-limitations)
 - [Related links](#related-links)
 
@@ -51,12 +52,14 @@ procedure described below.
 
 # Installation
 
-The current default version is Vertical Pod Autoscaler 1.1.2
+The current default version is Vertical Pod Autoscaler 1.2.1
 
 ### Compatibility
 
 | VPA version     | Kubernetes version |
 |-----------------|--------------------|
+| 1.2.1           | 1.27+              |
+| 1.2.0           | 1.27+              |
 | 1.1.2           | 1.25+              |
 | 1.1.1           | 1.25+              |
 | 1.0             | 1.25+              |
@@ -386,6 +389,11 @@ vpa-post-processor.kubernetes.io/{containerName}_integerCPU=true
 
 These options cannot be used together and are mutually exclusive. 
 
+ ### Setting the webhook failurePolicy
+
+ It is possible to set the failurePolicy of the webhook to `Fail` by passing `--webhook-failure-policy-fail=true` to the VPA admission controller.
+ Please use this option with caution as it may be possible to break Pod creation if there is a failure with the VPA.
+Using it in conjunction with `--ignored-vpa-object-namespaces=kube-system` or `--vpa-object-namespace` to reduce risk.
 
 # Known limitations
 
