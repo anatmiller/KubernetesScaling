@@ -28,6 +28,33 @@ import (
 // ClusterSnapshot is abstraction of cluster state used for predicate simulations.
 // It exposes mutation methods and can be viewed as scheduler's SharedLister.
 type ClusterSnapshot interface {
+	SnapshotBase
+
+	// SchedulePod tries to schedule the given Pod on the Node with the given name inside the snapshot,
+	// checking scheduling predicates. The pod is only scheduled if the predicates pass. If the pod is scheduled,
+	// all relevant DRA objects are modified to reflect that. Returns nil if the pod got scheduled, and a non-nil
+	// error explaining why not otherwise. The error type can be checked to distinguish failing predicates
+	// from unexpected errors.
+	SchedulePod(pod *apiv1.Pod, nodeName string) SchedulingError
+	// SchedulePodOnAnyNodeMatching tries to schedule the given Pod on any Node for which nodeMatches returns
+	// true. Scheduling predicates are checked, and the pod is scheduled only if there is a matching Node with passing
+	// predicates. If the pod is scheduled, all relevant DRA objects are modified to reflect that, and the name of the
+	// Node its scheduled on and nil are returned. If the pod can't be scheduled on any Node, an empty string and a non-nil
+	// error explaining why are returned. The error type can be checked to distinguish failing predicates from unexpected errors.
+	SchedulePodOnAnyNodeMatching(pod *apiv1.Pod, nodeMatches func(*framework.NodeInfo) bool) (matchingNode string, err SchedulingError)
+	// UnschedulePod removes the given Pod from the given Node inside the snapshot, and modifies all relevant DRA objects
+	// to reflect the removal. The pod can then be scheduled on another Node in the snapshot using the Schedule methods.
+	UnschedulePod(namespace string, podName string, nodeName string) error
+
+	// CheckPredicates runs scheduler predicates to check if the given Pod would be able to schedule on the Node with the given
+	// name. Returns nil if predicates pass, or a non-nil error specifying why they didn't otherwise. The error type can be checked
+	// to distinguish failing predicates from unexpected errors. Doesn't mutate the snapshot.
+	CheckPredicates(pod *apiv1.Pod, nodeName string) SchedulingError
+}
+
+// SnapshotBase is the "low-level" part of ClusterSnapshot. Mutation methods modify the snapshot state directly, without going
+// through scheduler predicates.
+type SnapshotBase interface {
 	schedulerframework.SharedLister
 
 	// SetClusterState resets the snapshot to an unforked state and replaces the contents of the snapshot
@@ -39,8 +66,8 @@ type ClusterSnapshot interface {
 	// ForceRemovePod removes the given Pod (and all DRA objects it owns) from the snapshot.
 	ForceRemovePod(namespace string, podName string, nodeName string) error
 
-	// AddNodeInfo adds the given NodeInfo to the snapshot. The Node and the Pods are added, as well as
-	// any DRA objects passed along them.
+	// AddNodeInfo adds the given NodeInfo to the snapshot without checking scheduler predicates. The Node and the Pods are added,
+	// as well as any DRA objects passed along them.
 	AddNodeInfo(nodeInfo *framework.NodeInfo) error
 	// RemoveNodeInfo removes the given NodeInfo from the snapshot The Node and the Pods are removed, as well as
 	// any DRA objects owned by them.
