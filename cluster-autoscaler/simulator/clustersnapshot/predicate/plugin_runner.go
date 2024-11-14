@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package predicatechecker
+package predicate
 
 import (
 	"context"
@@ -25,49 +25,32 @@ import (
 	"k8s.io/autoscaler/cluster-autoscaler/simulator/framework"
 
 	apiv1 "k8s.io/api/core/v1"
-	v1listers "k8s.io/client-go/listers/core/v1"
-	"k8s.io/klog/v2"
 	schedulerframework "k8s.io/kubernetes/pkg/scheduler/framework"
 )
 
-// SchedulerBasedPredicateChecker checks whether all required predicates pass for given Pod and Node.
-// The verification is done by calling out to scheduler code.
-type SchedulerBasedPredicateChecker struct {
-	fwHandle   *framework.Handle
-	nodeLister v1listers.NodeLister
-	podLister  v1listers.PodLister
-	lastIndex  int
+// SchedulerPluginRunner can be used to run various phases of scheduler plugins through the scheduler framework.
+type SchedulerPluginRunner struct {
+	fwHandle     *framework.Handle
+	snapshotBase clustersnapshot.SnapshotBase
+	lastIndex    int
 }
 
-// NewSchedulerBasedPredicateChecker builds scheduler based PredicateChecker.
-func NewSchedulerBasedPredicateChecker(fwHandle *framework.Handle) *SchedulerBasedPredicateChecker {
-	return &SchedulerBasedPredicateChecker{fwHandle: fwHandle}
+// NewSchedulerPluginRunner builds a SchedulerPluginRunner.
+func NewSchedulerPluginRunner(fwHandle *framework.Handle, snapshotBase clustersnapshot.SnapshotBase) *SchedulerPluginRunner {
+	return &SchedulerPluginRunner{fwHandle: fwHandle, snapshotBase: snapshotBase}
 }
 
-// FitsAnyNode checks if the given pod can be placed on any of the given nodes.
-func (p *SchedulerBasedPredicateChecker) FitsAnyNode(clusterSnapshot clustersnapshot.SnapshotBase, pod *apiv1.Pod) (string, clustersnapshot.SchedulingError) {
-	return p.FitsAnyNodeMatching(clusterSnapshot, pod, func(*framework.NodeInfo) bool {
-		return true
-	})
-}
-
-// FitsAnyNodeMatching checks if the given pod can be placed on any of the given nodes matching the provided function.
-func (p *SchedulerBasedPredicateChecker) FitsAnyNodeMatching(clusterSnapshot clustersnapshot.SnapshotBase, pod *apiv1.Pod, nodeMatches func(*framework.NodeInfo) bool) (string, clustersnapshot.SchedulingError) {
-	if clusterSnapshot == nil {
+// RunFiltersUntilPassingNode runs the scheduler framework PreFilter phase once, and then keeps running the Filter phase for all nodes in the cluster that match the provided
+// function - until a Node where the filters pass is found. Filters are only run for matching Nodes. If no matching node with passing filters is found, an error is returned.
+//
+// The node iteration always starts from the next Node from the last Node that was found by this method. TODO: Extract the iteration strategy out of SchedulerPluginRunner.
+func (p *SchedulerPluginRunner) RunFiltersUntilPassingNode(pod *apiv1.Pod, nodeMatches func(*framework.NodeInfo) bool) (string, clustersnapshot.SchedulingError) {
+	nodeInfosList, err := p.snapshotBase.ListNodeInfos()
+	if err != nil {
 		return "", clustersnapshot.NewSchedulingInternalError(pod, "ClusterSnapshot not provided")
 	}
 
-	nodeInfosList, err := clusterSnapshot.ListNodeInfos()
-	if err != nil {
-		// This should never happen.
-		//
-		// Scheduler requires interface returning error, but no implementation
-		// of ClusterSnapshot ever does it.
-		klog.Errorf("Error obtaining nodeInfos from schedulerLister")
-		return "", clustersnapshot.NewSchedulingInternalError(pod, "error obtaining nodeInfos from schedulerLister")
-	}
-
-	p.fwHandle.DelegatingLister.UpdateDelegate(clusterSnapshot)
+	p.fwHandle.DelegatingLister.UpdateDelegate(p.snapshotBase)
 	defer p.fwHandle.DelegatingLister.ResetDelegate()
 
 	state := schedulerframework.NewCycleState()
@@ -100,17 +83,14 @@ func (p *SchedulerBasedPredicateChecker) FitsAnyNodeMatching(clusterSnapshot clu
 	return "", clustersnapshot.NewNoNodesPassingPredicatesFoundError(pod)
 }
 
-// CheckPredicates checks if the given pod can be placed on the given node.
-func (p *SchedulerBasedPredicateChecker) CheckPredicates(clusterSnapshot clustersnapshot.SnapshotBase, pod *apiv1.Pod, nodeName string) clustersnapshot.SchedulingError {
-	if clusterSnapshot == nil {
-		return clustersnapshot.NewSchedulingInternalError(pod, "ClusterSnapshot not provided")
-	}
-	nodeInfo, err := clusterSnapshot.GetNodeInfo(nodeName)
+// RunFiltersOnNode runs the scheduler framework PreFilter and Filter phases to check if the given pod can be scheduled on the given node.
+func (p *SchedulerPluginRunner) RunFiltersOnNode(pod *apiv1.Pod, nodeName string) clustersnapshot.SchedulingError {
+	nodeInfo, err := p.snapshotBase.GetNodeInfo(nodeName)
 	if err != nil {
 		return clustersnapshot.NewSchedulingInternalError(pod, fmt.Sprintf("error obtaining NodeInfo for name %q: %v", nodeName, err))
 	}
 
-	p.fwHandle.DelegatingLister.UpdateDelegate(clusterSnapshot)
+	p.fwHandle.DelegatingLister.UpdateDelegate(p.snapshotBase)
 	defer p.fwHandle.DelegatingLister.ResetDelegate()
 
 	state := schedulerframework.NewCycleState()
@@ -134,7 +114,7 @@ func (p *SchedulerBasedPredicateChecker) CheckPredicates(clusterSnapshot cluster
 	return nil
 }
 
-func (p *SchedulerBasedPredicateChecker) failingFilterDebugInfo(filterName string, nodeInfo *framework.NodeInfo) string {
+func (p *SchedulerPluginRunner) failingFilterDebugInfo(filterName string, nodeInfo *framework.NodeInfo) string {
 	infoParts := []string{fmt.Sprintf("nodeName: %q", nodeInfo.Node().Name)}
 
 	switch filterName {
