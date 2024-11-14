@@ -33,6 +33,7 @@ import (
 	"k8s.io/autoscaler/cluster-autoscaler/observers/loopstart"
 	ca_processors "k8s.io/autoscaler/cluster-autoscaler/processors"
 	"k8s.io/autoscaler/cluster-autoscaler/simulator/clustersnapshot"
+	"k8s.io/autoscaler/cluster-autoscaler/simulator/clustersnapshot/base"
 	"k8s.io/autoscaler/cluster-autoscaler/simulator/clustersnapshot/predicate"
 	"k8s.io/autoscaler/cluster-autoscaler/simulator/drainability/rules"
 	"k8s.io/autoscaler/cluster-autoscaler/simulator/framework"
@@ -126,7 +127,7 @@ func initializeDefaultOptions(opts *AutoscalerOptions, informerFactory informers
 		opts.FrameworkHandle = fwHandle
 	}
 	if opts.ClusterSnapshot == nil {
-		opts.ClusterSnapshot = predicate.NewPredicateSnapshot(clustersnapshot.NewBasicClusterSnapshot(), opts.FrameworkHandle)
+		opts.ClusterSnapshot = predicate.NewPredicateSnapshot(base.NewBasicClusterSnapshot(), opts.FrameworkHandle)
 	}
 	if opts.RemainingPdbTracker == nil {
 		opts.RemainingPdbTracker = pdb.NewBasicRemainingPdbTracker()
