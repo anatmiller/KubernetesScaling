@@ -358,7 +358,7 @@ func (a *Actuator) taintNode(node *apiv1.Node) error {
 }
 
 func (a *Actuator) createSnapshot(nodes []*apiv1.Node) (clustersnapshot.ClusterSnapshot, error) {
-	snapshot := predicate.NewPredicateSnapshot(base.NewBasicClusterSnapshot(), a.ctx.FrameworkHandle)
+	snapshot := predicate.NewPredicateSnapshot(base.NewBasicSnapshotBase(), a.ctx.FrameworkHandle)
 	pods, err := a.ctx.AllPodLister().List()
 	if err != nil {
 		return nil, err

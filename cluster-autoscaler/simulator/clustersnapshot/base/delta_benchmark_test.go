@@ -47,7 +47,7 @@ func BenchmarkBuildNodeInfoList(b *testing.B) {
 	for _, tc := range testCases {
 		b.Run(fmt.Sprintf("fork add 1000 to %d", tc.nodeCount), func(b *testing.B) {
 			nodes := clustersnapshot.CreateTestNodes(tc.nodeCount + 1000)
-			clusterSnapshot := NewDeltaClusterSnapshot()
+			clusterSnapshot := NewDeltaSnapshotBase()
 			if err := clusterSnapshot.SetClusterState(nodes[:tc.nodeCount], nil); err != nil {
 				assert.NoError(b, err)
 			}
@@ -69,7 +69,7 @@ func BenchmarkBuildNodeInfoList(b *testing.B) {
 	for _, tc := range testCases {
 		b.Run(fmt.Sprintf("base %d", tc.nodeCount), func(b *testing.B) {
 			nodes := clustersnapshot.CreateTestNodes(tc.nodeCount)
-			clusterSnapshot := NewDeltaClusterSnapshot()
+			clusterSnapshot := NewDeltaSnapshotBase()
 			if err := clusterSnapshot.SetClusterState(nodes, nil); err != nil {
 				assert.NoError(b, err)
 			}

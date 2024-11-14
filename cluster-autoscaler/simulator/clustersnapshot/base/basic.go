@@ -26,9 +26,9 @@ import (
 	schedulerframework "k8s.io/kubernetes/pkg/scheduler/framework"
 )
 
-// BasicClusterSnapshot is simple, reference implementation of ClusterSnapshot.
+// BasicSnapshotBase is simple, reference implementation of SnapshotBase.
 // It is inefficient. But hopefully bug-free and good for initial testing.
-type BasicClusterSnapshot struct {
+type BasicSnapshotBase struct {
 	data []*internalBasicSnapshotData
 }
 
@@ -194,19 +194,19 @@ func (data *internalBasicSnapshotData) removePod(namespace, podName, nodeName st
 	return fmt.Errorf("pod %s/%s not in snapshot", namespace, podName)
 }
 
-// NewBasicClusterSnapshot creates instances of BasicClusterSnapshot.
-func NewBasicClusterSnapshot() *BasicClusterSnapshot {
-	snapshot := &BasicClusterSnapshot{}
+// NewBasicSnapshotBase creates instances of BasicSnapshotBase.
+func NewBasicSnapshotBase() *BasicSnapshotBase {
+	snapshot := &BasicSnapshotBase{}
 	snapshot.clear()
 	return snapshot
 }
 
-func (snapshot *BasicClusterSnapshot) getInternalData() *internalBasicSnapshotData {
+func (snapshot *BasicSnapshotBase) getInternalData() *internalBasicSnapshotData {
 	return snapshot.data[len(snapshot.data)-1]
 }
 
 // GetNodeInfo gets a NodeInfo.
-func (snapshot *BasicClusterSnapshot) GetNodeInfo(nodeName string) (*framework.NodeInfo, error) {
+func (snapshot *BasicSnapshotBase) GetNodeInfo(nodeName string) (*framework.NodeInfo, error) {
 	schedNodeInfo, err := snapshot.getInternalData().getNodeInfo(nodeName)
 	if err != nil {
 		return nil, err
@@ -215,13 +215,13 @@ func (snapshot *BasicClusterSnapshot) GetNodeInfo(nodeName string) (*framework.N
 }
 
 // ListNodeInfos lists NodeInfos.
-func (snapshot *BasicClusterSnapshot) ListNodeInfos() ([]*framework.NodeInfo, error) {
+func (snapshot *BasicSnapshotBase) ListNodeInfos() ([]*framework.NodeInfo, error) {
 	schedNodeInfos := snapshot.getInternalData().listNodeInfos()
 	return framework.WrapSchedulerNodeInfos(schedNodeInfos), nil
 }
 
 // AddNodeInfo adds a NodeInfo.
-func (snapshot *BasicClusterSnapshot) AddNodeInfo(nodeInfo *framework.NodeInfo) error {
+func (snapshot *BasicSnapshotBase) AddNodeInfo(nodeInfo *framework.NodeInfo) error {
 	if err := snapshot.getInternalData().addNode(nodeInfo.Node()); err != nil {
 		return err
 	}
@@ -234,7 +234,7 @@ func (snapshot *BasicClusterSnapshot) AddNodeInfo(nodeInfo *framework.NodeInfo) 
 }
 
 // SetClusterState sets the cluster state.
-func (snapshot *BasicClusterSnapshot) SetClusterState(nodes []*apiv1.Node, scheduledPods []*apiv1.Pod) error {
+func (snapshot *BasicSnapshotBase) SetClusterState(nodes []*apiv1.Node, scheduledPods []*apiv1.Pod) error {
 	snapshot.clear()
 
 	knownNodes := make(map[string]bool)
@@ -255,33 +255,33 @@ func (snapshot *BasicClusterSnapshot) SetClusterState(nodes []*apiv1.Node, sched
 }
 
 // RemoveNodeInfo removes nodes (and pods scheduled to it) from the snapshot.
-func (snapshot *BasicClusterSnapshot) RemoveNodeInfo(nodeName string) error {
+func (snapshot *BasicSnapshotBase) RemoveNodeInfo(nodeName string) error {
 	return snapshot.getInternalData().removeNodeInfo(nodeName)
 }
 
 // ForceAddPod adds pod to the snapshot and schedules it to given node.
-func (snapshot *BasicClusterSnapshot) ForceAddPod(pod *apiv1.Pod, nodeName string) error {
+func (snapshot *BasicSnapshotBase) ForceAddPod(pod *apiv1.Pod, nodeName string) error {
 	return snapshot.getInternalData().addPod(pod, nodeName)
 }
 
 // ForceRemovePod removes pod from the snapshot.
-func (snapshot *BasicClusterSnapshot) ForceRemovePod(namespace, podName, nodeName string) error {
+func (snapshot *BasicSnapshotBase) ForceRemovePod(namespace, podName, nodeName string) error {
 	return snapshot.getInternalData().removePod(namespace, podName, nodeName)
 }
 
 // IsPVCUsedByPods returns if the pvc is used by any pod
-func (snapshot *BasicClusterSnapshot) IsPVCUsedByPods(key string) bool {
+func (snapshot *BasicSnapshotBase) IsPVCUsedByPods(key string) bool {
 	return snapshot.getInternalData().isPVCUsedByPods(key)
 }
 
 // Fork creates a fork of snapshot state. All modifications can later be reverted to moment of forking via Revert()
-func (snapshot *BasicClusterSnapshot) Fork() {
+func (snapshot *BasicSnapshotBase) Fork() {
 	forkData := snapshot.getInternalData().clone()
 	snapshot.data = append(snapshot.data, forkData)
 }
 
 // Revert reverts snapshot state to moment of forking.
-func (snapshot *BasicClusterSnapshot) Revert() {
+func (snapshot *BasicSnapshotBase) Revert() {
 	if len(snapshot.data) == 1 {
 		return
 	}
@@ -289,7 +289,7 @@ func (snapshot *BasicClusterSnapshot) Revert() {
 }
 
 // Commit commits changes done after forking.
-func (snapshot *BasicClusterSnapshot) Commit() error {
+func (snapshot *BasicSnapshotBase) Commit() error {
 	if len(snapshot.data) <= 1 {
 		// do nothing
 		return nil
@@ -299,47 +299,47 @@ func (snapshot *BasicClusterSnapshot) Commit() error {
 }
 
 // clear reset cluster snapshot to empty, unforked state
-func (snapshot *BasicClusterSnapshot) clear() {
+func (snapshot *BasicSnapshotBase) clear() {
 	baseData := newInternalBasicSnapshotData()
 	snapshot.data = []*internalBasicSnapshotData{baseData}
 }
 
 // implementation of SharedLister interface
 
-type basicClusterSnapshotNodeLister BasicClusterSnapshot
-type basicClusterSnapshotStorageLister BasicClusterSnapshot
+type basicClusterSnapshotNodeLister BasicSnapshotBase
+type basicClusterSnapshotStorageLister BasicSnapshotBase
 
 // NodeInfos exposes snapshot as NodeInfoLister.
-func (snapshot *BasicClusterSnapshot) NodeInfos() schedulerframework.NodeInfoLister {
+func (snapshot *BasicSnapshotBase) NodeInfos() schedulerframework.NodeInfoLister {
 	return (*basicClusterSnapshotNodeLister)(snapshot)
 }
 
 // StorageInfos exposes snapshot as StorageInfoLister.
-func (snapshot *BasicClusterSnapshot) StorageInfos() schedulerframework.StorageInfoLister {
+func (snapshot *BasicSnapshotBase) StorageInfos() schedulerframework.StorageInfoLister {
 	return (*basicClusterSnapshotStorageLister)(snapshot)
 }
 
 // List returns the list of nodes in the snapshot.
 func (snapshot *basicClusterSnapshotNodeLister) List() ([]*schedulerframework.NodeInfo, error) {
-	return (*BasicClusterSnapshot)(snapshot).getInternalData().listNodeInfos(), nil
+	return (*BasicSnapshotBase)(snapshot).getInternalData().listNodeInfos(), nil
 }
 
 // HavePodsWithAffinityList returns the list of nodes with at least one pods with inter-pod affinity
 func (snapshot *basicClusterSnapshotNodeLister) HavePodsWithAffinityList() ([]*schedulerframework.NodeInfo, error) {
-	return (*BasicClusterSnapshot)(snapshot).getInternalData().listNodeInfosThatHavePodsWithAffinityList()
+	return (*BasicSnapshotBase)(snapshot).getInternalData().listNodeInfosThatHavePodsWithAffinityList()
 }
 
 // HavePodsWithRequiredAntiAffinityList returns the list of NodeInfos of nodes with pods with required anti-affinity terms.
 func (snapshot *basicClusterSnapshotNodeLister) HavePodsWithRequiredAntiAffinityList() ([]*schedulerframework.NodeInfo, error) {
-	return (*BasicClusterSnapshot)(snapshot).getInternalData().listNodeInfosThatHavePodsWithRequiredAntiAffinityList()
+	return (*BasicSnapshotBase)(snapshot).getInternalData().listNodeInfosThatHavePodsWithRequiredAntiAffinityList()
 }
 
 // Returns the NodeInfo of the given node name.
 func (snapshot *basicClusterSnapshotNodeLister) Get(nodeName string) (*schedulerframework.NodeInfo, error) {
-	return (*BasicClusterSnapshot)(snapshot).getInternalData().getNodeInfo(nodeName)
+	return (*BasicSnapshotBase)(snapshot).getInternalData().getNodeInfo(nodeName)
 }
 
 // Returns the IsPVCUsedByPods in a given key.
 func (snapshot *basicClusterSnapshotStorageLister) IsPVCUsedByPods(key string) bool {
-	return (*BasicClusterSnapshot)(snapshot).getInternalData().isPVCUsedByPods(key)
+	return (*BasicSnapshotBase)(snapshot).getInternalData().isPVCUsedByPods(key)
 }
