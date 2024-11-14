@@ -24,13 +24,11 @@ import (
 	core_utils "k8s.io/autoscaler/cluster-autoscaler/simulator"
 	"k8s.io/autoscaler/cluster-autoscaler/simulator/clustersnapshot"
 	"k8s.io/autoscaler/cluster-autoscaler/simulator/framework"
-	"k8s.io/autoscaler/cluster-autoscaler/simulator/predicatechecker"
 	"k8s.io/klog/v2"
 )
 
 // BinpackingNodeEstimator estimates the number of needed nodes to handle the given amount of pods.
 type BinpackingNodeEstimator struct {
-	predicateChecker       predicatechecker.PredicateChecker
 	clusterSnapshot        clustersnapshot.ClusterSnapshot
 	limiter                EstimationLimiter
 	podOrderer             EstimationPodOrderer
@@ -48,9 +46,13 @@ type estimationState struct {
 	newNodesWithPods map[string]bool
 }
 
+func (s *estimationState) trackScheduledPod(pod *apiv1.Pod, nodeName string) {
+	s.newNodesWithPods[nodeName] = true
+	s.scheduledPods = append(s.scheduledPods, pod)
+}
+
 // NewBinpackingNodeEstimator builds a new BinpackingNodeEstimator.
 func NewBinpackingNodeEstimator(
-	predicateChecker predicatechecker.PredicateChecker,
 	clusterSnapshot clustersnapshot.ClusterSnapshot,
 	limiter EstimationLimiter,
 	podOrderer EstimationPodOrderer,
@@ -58,7 +60,6 @@ func NewBinpackingNodeEstimator(
 	estimationAnalyserFunc EstimationAnalyserFunc,
 ) *BinpackingNodeEstimator {
 	return &BinpackingNodeEstimator{
-		predicateChecker:       predicateChecker,
 		clusterSnapshot:        clusterSnapshot,
 		limiter:                limiter,
 		podOrderer:             podOrderer,
@@ -136,16 +137,16 @@ func (e *BinpackingNodeEstimator) tryToScheduleOnExistingNodes(
 		pod := pods[index]
 
 		// Check schedulability on all nodes created during simulation
-		nodeName, err := e.predicateChecker.FitsAnyNodeMatching(e.clusterSnapshot, pod, func(nodeInfo *framework.NodeInfo) bool {
+		nodeName, err := e.clusterSnapshot.SchedulePodOnAnyNodeMatching(pod, func(nodeInfo *framework.NodeInfo) bool {
 			return estimationState.newNodeNames[nodeInfo.Node().Name]
 		})
-		if err != nil {
+		if err != nil && err.Type() == clustersnapshot.NoNodesPassingPredicatesFoundError {
 			break
-		}
-
-		if err := e.tryToAddNode(estimationState, pod, nodeName); err != nil {
+		} else if err != nil {
+			// Unexpected error.
 			return nil, err
 		}
+		estimationState.trackScheduledPod(pod, nodeName)
 	}
 	return pods[index:], nil
 }
@@ -160,11 +161,12 @@ func (e *BinpackingNodeEstimator) tryToScheduleOnNewNodes(
 
 		if estimationState.lastNodeName != "" {
 			// Check schedulability on only newly created node
-			if err := e.predicateChecker.CheckPredicates(e.clusterSnapshot, pod, estimationState.lastNodeName); err == nil {
+			if err := e.clusterSnapshot.SchedulePod(pod, estimationState.lastNodeName); err == nil {
 				found = true
-				if err := e.tryToAddNode(estimationState, pod, estimationState.lastNodeName); err != nil {
-					return err
-				}
+				estimationState.trackScheduledPod(pod, estimationState.lastNodeName)
+			} else if err.Type() != clustersnapshot.FailingPredicateError {
+				// Unexpected error.
+				return err
 			}
 		}
 
@@ -195,12 +197,13 @@ func (e *BinpackingNodeEstimator) tryToScheduleOnNewNodes(
 			// Note that this may still fail (ex. if topology spreading with zonal topologyKey is used);
 			// in this case we can't help the pending pod. We keep the node in clusterSnapshot to avoid
 			// adding and removing node to snapshot for each such pod.
-			if err := e.predicateChecker.CheckPredicates(e.clusterSnapshot, pod, estimationState.lastNodeName); err != nil {
+			if err := e.clusterSnapshot.SchedulePod(pod, estimationState.lastNodeName); err != nil && err.Type() == clustersnapshot.FailingPredicateError {
 				break
-			}
-			if err := e.tryToAddNode(estimationState, pod, estimationState.lastNodeName); err != nil {
+			} else if err != nil {
+				// Unexpected error.
 				return err
 			}
+			estimationState.trackScheduledPod(pod, estimationState.lastNodeName)
 		}
 	}
 	return nil
@@ -217,18 +220,5 @@ func (e *BinpackingNodeEstimator) addNewNodeToSnapshot(
 	estimationState.newNodeNameIndex++
 	estimationState.lastNodeName = newNodeInfo.Node().Name
 	estimationState.newNodeNames[estimationState.lastNodeName] = true
-	return nil
-}
-
-func (e *BinpackingNodeEstimator) tryToAddNode(
-	estimationState *estimationState,
-	pod *apiv1.Pod,
-	nodeName string,
-) error {
-	if err := e.clusterSnapshot.ForceAddPod(pod, nodeName); err != nil {
-		return fmt.Errorf("Error adding pod %v.%v to node %v in ClusterSnapshot; %v", pod.Namespace, pod.Name, nodeName, err)
-	}
-	estimationState.newNodesWithPods[nodeName] = true
-	estimationState.scheduledPods = append(estimationState.scheduledPods, pod)
 	return nil
 }
