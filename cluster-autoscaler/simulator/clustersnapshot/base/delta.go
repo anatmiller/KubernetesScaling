@@ -387,6 +387,21 @@ func (snapshot *DeltaSnapshotBase) StorageInfos() schedulerframework.StorageInfo
 	return (*deltaSnapshotStorageLister)(snapshot)
 }
 
+// ResourceClaims exposes snapshot as ResourceClaimTracker
+func (snapshot *DeltaSnapshotBase) ResourceClaims() schedulerframework.ResourceClaimTracker {
+	return nil
+}
+
+// ResourceSlices exposes snapshot as ResourceSliceLister.
+func (snapshot *DeltaSnapshotBase) ResourceSlices() schedulerframework.ResourceSliceLister {
+	return nil
+}
+
+// DeviceClasses exposes the snapshot as DeviceClassLister.
+func (snapshot *DeltaSnapshotBase) DeviceClasses() schedulerframework.DeviceClassLister {
+	return nil
+}
+
 // NewDeltaSnapshotBase creates instances of DeltaSnapshotBase.
 func NewDeltaSnapshotBase() *DeltaSnapshotBase {
 	snapshot := &DeltaSnapshotBase{}

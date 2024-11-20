@@ -25,6 +25,7 @@ import (
 	scheduler_config "k8s.io/kubernetes/pkg/scheduler/apis/config/latest"
 	schedulerframework "k8s.io/kubernetes/pkg/scheduler/framework"
 	scheduler_plugins "k8s.io/kubernetes/pkg/scheduler/framework/plugins"
+	draplugin "k8s.io/kubernetes/pkg/scheduler/framework/plugins/dynamicresources"
 	schedulerframeworkruntime "k8s.io/kubernetes/pkg/scheduler/framework/runtime"
 	schedulermetrics "k8s.io/kubernetes/pkg/scheduler/metrics"
 )
@@ -36,7 +37,7 @@ type Handle struct {
 }
 
 // NewHandle builds a framework Handle based on the provided informers and scheduler config.
-func NewHandle(informerFactory informers.SharedInformerFactory, schedConfig *config.KubeSchedulerConfiguration) (*Handle, error) {
+func NewHandle(informerFactory informers.SharedInformerFactory, schedConfig *config.KubeSchedulerConfiguration, draEnabled bool) (*Handle, error) {
 	if schedConfig == nil {
 		var err error
 		schedConfig, err = scheduler_config.Default()
@@ -44,19 +45,28 @@ func NewHandle(informerFactory informers.SharedInformerFactory, schedConfig *con
 			return nil, fmt.Errorf("couldn't create scheduler config: %v", err)
 		}
 	}
-
 	if len(schedConfig.Profiles) != 1 {
 		return nil, fmt.Errorf("unexpected scheduler config: expected one scheduler profile only (found %d profiles)", len(schedConfig.Profiles))
 	}
+	schedProfile := &schedConfig.Profiles[0]
+
 	sharedLister := NewDelegatingSchedulerSharedLister()
+	opts := []schedulerframeworkruntime.Option{
+		schedulerframeworkruntime.WithInformerFactory(informerFactory),
+		schedulerframeworkruntime.WithSnapshotSharedLister(sharedLister),
+	}
+
+	if draEnabled {
+		schedProfile = profileWithDraPlugin(schedProfile)
+		opts = append(opts, schedulerframeworkruntime.WithSharedDRAManager(sharedLister))
+	}
 
 	schedulermetrics.InitMetrics()
 	framework, err := schedulerframeworkruntime.NewFramework(
 		context.TODO(),
 		scheduler_plugins.NewInTreeRegistry(),
-		&schedConfig.Profiles[0],
-		schedulerframeworkruntime.WithInformerFactory(informerFactory),
-		schedulerframeworkruntime.WithSnapshotSharedLister(sharedLister),
+		schedProfile,
+		opts...,
 	)
 
 	if err != nil {
@@ -67,4 +77,23 @@ func NewHandle(informerFactory informers.SharedInformerFactory, schedConfig *con
 		Framework:        framework,
 		DelegatingLister: sharedLister,
 	}, nil
+}
+
+func profileWithDraPlugin(profile *config.KubeSchedulerProfile) *config.KubeSchedulerProfile {
+	result := profile.DeepCopy()
+	addPluginIfNotPresent(result.Plugins.PreFilter, draplugin.Name)
+	addPluginIfNotPresent(result.Plugins.Filter, draplugin.Name)
+	addPluginIfNotPresent(result.Plugins.Reserve, draplugin.Name)
+	return result
+}
+
+func addPluginIfNotPresent(pluginSet config.PluginSet, pluginName string) {
+	for _, plugin := range pluginSet.Enabled {
+		if plugin.Name == pluginName {
+			// Plugin already present in the set.
+			return
+		}
+	}
+	// Plugin not present in the set, add it.
+	pluginSet.Enabled = append(pluginSet.Enabled, config.Plugin{Name: pluginName})
 }
