@@ -32,11 +32,44 @@ type PredicateSnapshot struct {
 
 // NewPredicateSnapshot builds a PredicateSnapshot.
 func NewPredicateSnapshot(snapshotBase clustersnapshot.SnapshotBase, fwHandle *framework.Handle, draEnabled bool) *PredicateSnapshot {
-	return &PredicateSnapshot{
+	snapshot := &PredicateSnapshot{
 		SnapshotBase: snapshotBase,
-		pluginRunner: NewSchedulerPluginRunner(fwHandle, snapshotBase),
 		draEnabled:   draEnabled,
 	}
+	snapshot.pluginRunner = NewSchedulerPluginRunner(fwHandle, snapshot)
+	return snapshot
+}
+
+// GetNodeInfo returns an internal NodeInfo wrapping the relevant schedulerframework.NodeInfo.
+func (s *PredicateSnapshot) GetNodeInfo(nodeName string) (*framework.NodeInfo, error) {
+	schedNodeInfo, err := s.SnapshotBase.NodeInfos().Get(nodeName)
+	if err != nil {
+		return nil, err
+	}
+	return framework.WrapSchedulerNodeInfo(schedNodeInfo, nil, nil), nil
+}
+
+// ListNodeInfos returns internal NodeInfos wrapping all schedulerframework.NodeInfos in the snapshot.
+func (s *PredicateSnapshot) ListNodeInfos() ([]*framework.NodeInfo, error) {
+	schedNodeInfos, err := s.SnapshotBase.NodeInfos().List()
+	if err != nil {
+		return nil, err
+	}
+	var result []*framework.NodeInfo
+	for _, schedNodeInfo := range schedNodeInfos {
+		result = append(result, framework.WrapSchedulerNodeInfo(schedNodeInfo, nil, nil))
+	}
+	return result, nil
+}
+
+// AddNodeInfo adds the provided internal NodeInfo to the snapshot.
+func (s *PredicateSnapshot) AddNodeInfo(nodeInfo *framework.NodeInfo) error {
+	return s.SnapshotBase.AddSchedulerNodeInfo(nodeInfo.ToScheduler())
+}
+
+// RemoveNodeInfo removes a NodeInfo matching the provided nodeName from the snapshot.
+func (s *PredicateSnapshot) RemoveNodeInfo(nodeName string) error {
+	return s.SnapshotBase.RemoveSchedulerNodeInfo(nodeName)
 }
 
 // SchedulePod adds pod to the snapshot and schedules it to given node.

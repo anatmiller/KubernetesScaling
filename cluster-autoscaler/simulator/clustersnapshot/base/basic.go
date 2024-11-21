@@ -22,7 +22,6 @@ import (
 	apiv1 "k8s.io/api/core/v1"
 	"k8s.io/autoscaler/cluster-autoscaler/simulator/clustersnapshot"
 	drasnapshot "k8s.io/autoscaler/cluster-autoscaler/simulator/dynamicresources/snapshot"
-	"k8s.io/autoscaler/cluster-autoscaler/simulator/framework"
 	"k8s.io/klog/v2"
 	schedulerframework "k8s.io/kubernetes/pkg/scheduler/framework"
 )
@@ -213,31 +212,12 @@ func (snapshot *BasicSnapshotBase) DraSnapshot() drasnapshot.Snapshot {
 	return snapshot.getInternalData().draSnapshot
 }
 
-// GetNodeInfo gets a NodeInfo.
-func (snapshot *BasicSnapshotBase) GetNodeInfo(nodeName string) (*framework.NodeInfo, error) {
-	schedNodeInfo, err := snapshot.getInternalData().getNodeInfo(nodeName)
-	if err != nil {
-		return nil, err
-	}
-	return framework.WrapSchedulerNodeInfo(schedNodeInfo, nil, nil), nil
-}
-
-// ListNodeInfos lists NodeInfos.
-func (snapshot *BasicSnapshotBase) ListNodeInfos() ([]*framework.NodeInfo, error) {
-	schedNodeInfos := snapshot.getInternalData().listNodeInfos()
-	var result []*framework.NodeInfo
-	for _, schedNodeInfo := range schedNodeInfos {
-		result = append(result, framework.WrapSchedulerNodeInfo(schedNodeInfo, nil, nil))
-	}
-	return result, nil
-}
-
-// AddNodeInfo adds a NodeInfo.
-func (snapshot *BasicSnapshotBase) AddNodeInfo(nodeInfo *framework.NodeInfo) error {
+// AddSchedulerNodeInfo adds a NodeInfo.
+func (snapshot *BasicSnapshotBase) AddSchedulerNodeInfo(nodeInfo *schedulerframework.NodeInfo) error {
 	if err := snapshot.getInternalData().addNode(nodeInfo.Node()); err != nil {
 		return err
 	}
-	for _, podInfo := range nodeInfo.Pods() {
+	for _, podInfo := range nodeInfo.Pods {
 		if err := snapshot.getInternalData().addPod(podInfo.Pod, nodeInfo.Node().Name); err != nil {
 			return err
 		}
@@ -267,8 +247,8 @@ func (snapshot *BasicSnapshotBase) SetClusterState(nodes []*apiv1.Node, schedule
 	return nil
 }
 
-// RemoveNodeInfo removes nodes (and pods scheduled to it) from the snapshot.
-func (snapshot *BasicSnapshotBase) RemoveNodeInfo(nodeName string) error {
+// RemoveSchedulerNodeInfo removes nodes (and pods scheduled to it) from the snapshot.
+func (snapshot *BasicSnapshotBase) RemoveSchedulerNodeInfo(nodeName string) error {
 	return snapshot.getInternalData().removeNodeInfo(nodeName)
 }
 
