@@ -36,6 +36,7 @@ type BasicSnapshotBase struct {
 type internalBasicSnapshotData struct {
 	nodeInfoMap        map[string]*schedulerframework.NodeInfo
 	pvcNamespacePodMap map[string]map[string]bool
+	draSnapshot        drasnapshot.Snapshot
 }
 
 func (data *internalBasicSnapshotData) listNodeInfos() []*schedulerframework.NodeInfo {
@@ -142,6 +143,7 @@ func (data *internalBasicSnapshotData) clone() *internalBasicSnapshotData {
 	return &internalBasicSnapshotData{
 		nodeInfoMap:        clonedNodeInfoMap,
 		pvcNamespacePodMap: clonedPvcNamespaceNodeMap,
+		draSnapshot:        data.draSnapshot.Clone(),
 	}
 }
 
@@ -208,8 +210,7 @@ func (snapshot *BasicSnapshotBase) getInternalData() *internalBasicSnapshotData 
 
 // DraSnapshot returns the DRA snapshot.
 func (snapshot *BasicSnapshotBase) DraSnapshot() drasnapshot.Snapshot {
-	// TODO(DRA): Return DRA snapshot.
-	return drasnapshot.Snapshot{}
+	return snapshot.getInternalData().draSnapshot
 }
 
 // GetNodeInfo gets a NodeInfo.
@@ -262,7 +263,7 @@ func (snapshot *BasicSnapshotBase) SetClusterState(nodes []*apiv1.Node, schedule
 			}
 		}
 	}
-	// TODO(DRA): Save DRA snapshot.
+	snapshot.getInternalData().draSnapshot = draSnapshot
 	return nil
 }
 
