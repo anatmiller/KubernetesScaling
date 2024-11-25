@@ -33,7 +33,11 @@ import (
 	"k8s.io/autoscaler/cluster-autoscaler/observers/nodegroupchange"
 	"k8s.io/autoscaler/cluster-autoscaler/simulator"
 	"k8s.io/autoscaler/cluster-autoscaler/simulator/clustersnapshot"
+	"k8s.io/autoscaler/cluster-autoscaler/simulator/clustersnapshot/base"
+	"k8s.io/autoscaler/cluster-autoscaler/simulator/clustersnapshot/predicate"
 	"k8s.io/autoscaler/cluster-autoscaler/simulator/drainability/rules"
+	draprovider "k8s.io/autoscaler/cluster-autoscaler/simulator/dynamicresources/provider"
+	drasnapshot "k8s.io/autoscaler/cluster-autoscaler/simulator/dynamicresources/snapshot"
 	"k8s.io/autoscaler/cluster-autoscaler/simulator/options"
 	"k8s.io/autoscaler/cluster-autoscaler/simulator/utilization"
 	"k8s.io/autoscaler/cluster-autoscaler/utils/errors"
@@ -61,6 +65,7 @@ type Actuator struct {
 	configGetter              actuatorNodeGroupConfigGetter
 	nodeDeleteDelayAfterTaint time.Duration
 	pastLatencies             *expiring.List
+	draProvider               *draprovider.Provider
 }
 
 // actuatorNodeGroupConfigGetter is an interface to limit the functions that can be used
@@ -71,7 +76,7 @@ type actuatorNodeGroupConfigGetter interface {
 }
 
 // NewActuator returns a new instance of Actuator.
-func NewActuator(ctx *context.AutoscalingContext, scaleStateNotifier nodegroupchange.NodeGroupChangeObserver, ndt *deletiontracker.NodeDeletionTracker, deleteOptions options.NodeDeleteOptions, drainabilityRules rules.Rules, configGetter actuatorNodeGroupConfigGetter) *Actuator {
+func NewActuator(ctx *context.AutoscalingContext, scaleStateNotifier nodegroupchange.NodeGroupChangeObserver, ndt *deletiontracker.NodeDeletionTracker, deleteOptions options.NodeDeleteOptions, drainabilityRules rules.Rules, configGetter actuatorNodeGroupConfigGetter, draProvider *draprovider.Provider) *Actuator {
 	ndb := NewNodeDeletionBatcher(ctx, scaleStateNotifier, ndt, ctx.NodeDeletionBatcherInterval)
 	legacyFlagDrainConfig := SingleRuleDrainConfig(ctx.MaxGracefulTerminationSec)
 	var evictor Evictor
@@ -90,6 +95,7 @@ func NewActuator(ctx *context.AutoscalingContext, scaleStateNotifier nodegroupch
 		configGetter:              configGetter,
 		nodeDeleteDelayAfterTaint: ctx.NodeDeleteDelayAfterTaint,
 		pastLatencies:             expiring.NewList(),
+		draProvider:               draProvider,
 	}
 }
 
@@ -328,7 +334,7 @@ func (a *Actuator) scaleDownNodeToReport(node *apiv1.Node, drain bool) (*status.
 	}
 
 	gpuConfig := a.ctx.CloudProvider.GetNodeGpuConfig(node)
-	utilInfo, err := utilization.Calculate(nodeInfo, ignoreDaemonSetsUtilization, a.ctx.IgnoreMirrorPodsUtilization, gpuConfig, time.Now())
+	utilInfo, err := utilization.Calculate(nodeInfo, ignoreDaemonSetsUtilization, a.ctx.IgnoreMirrorPodsUtilization, a.ctx.DynamicResourceAllocationEnabled, gpuConfig, time.Now())
 	if err != nil {
 		return nil, err
 	}
@@ -356,7 +362,7 @@ func (a *Actuator) taintNode(node *apiv1.Node) error {
 }
 
 func (a *Actuator) createSnapshot(nodes []*apiv1.Node) (clustersnapshot.ClusterSnapshot, error) {
-	snapshot := clustersnapshot.NewBasicClusterSnapshot()
+	snapshot := predicate.NewPredicateSnapshot(base.NewBasicSnapshotBase(), a.ctx.FrameworkHandle, a.ctx.DynamicResourceAllocationEnabled)
 	pods, err := a.ctx.AllPodLister().List()
 	if err != nil {
 		return nil, err
@@ -365,7 +371,16 @@ func (a *Actuator) createSnapshot(nodes []*apiv1.Node) (clustersnapshot.ClusterS
 	scheduledPods := kube_util.ScheduledPods(pods)
 	nonExpendableScheduledPods := utils.FilterOutExpendablePods(scheduledPods, a.ctx.ExpendablePodsPriorityCutoff)
 
-	err = snapshot.SetClusterState(nodes, nonExpendableScheduledPods)
+	var draSnapshot drasnapshot.Snapshot
+	if a.ctx.DynamicResourceAllocationEnabled && a.draProvider != nil {
+		draSnapshot, err = a.draProvider.Snapshot()
+		if err != nil {
+			// TODO(DRA): Maybe proceed?
+			return nil, err
+		}
+	}
+
+	err = snapshot.SetClusterState(nodes, nonExpendableScheduledPods, draSnapshot)
 	if err != nil {
 		return nil, err
 	}

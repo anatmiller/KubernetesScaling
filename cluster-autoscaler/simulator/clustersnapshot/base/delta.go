@@ -14,18 +14,19 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package clustersnapshot
+package base
 
 import (
 	"fmt"
 
 	apiv1 "k8s.io/api/core/v1"
-	"k8s.io/autoscaler/cluster-autoscaler/simulator/framework"
+	"k8s.io/autoscaler/cluster-autoscaler/simulator/clustersnapshot"
+	drasnapshot "k8s.io/autoscaler/cluster-autoscaler/simulator/dynamicresources/snapshot"
 	"k8s.io/klog/v2"
 	schedulerframework "k8s.io/kubernetes/pkg/scheduler/framework"
 )
 
-// DeltaClusterSnapshot is an implementation of ClusterSnapshot optimized for typical Cluster Autoscaler usage - (fork, add stuff, revert), repeated many times per loop.
+// DeltaSnapshotBase is an implementation of SnapshotBase optimized for typical Cluster Autoscaler usage - (fork, add stuff, revert), repeated many times per loop.
 //
 // Complexity of some notable operations:
 //
@@ -42,12 +43,12 @@ import (
 //		(when forked affects delta, but not base.)
 //	pod affinity - causes scheduler framework to list pods with non-empty selector,
 //		so basic caching doesn't help.
-type DeltaClusterSnapshot struct {
+type DeltaSnapshotBase struct {
 	data *internalDeltaSnapshotData
 }
 
-type deltaSnapshotNodeLister DeltaClusterSnapshot
-type deltaSnapshotStorageLister DeltaClusterSnapshot
+type deltaSnapshotNodeLister DeltaSnapshotBase
+type deltaSnapshotStorageLister DeltaSnapshotBase
 
 type internalDeltaSnapshotData struct {
 	baseData *internalDeltaSnapshotData
@@ -191,7 +192,7 @@ func (data *internalDeltaSnapshotData) removeNodeInfo(nodeName string) error {
 
 	if _, deleted := data.deletedNodeInfos[nodeName]; deleted {
 		// If node was deleted within this delta, fail with error.
-		return ErrNodeNotFound
+		return clustersnapshot.ErrNodeNotFound
 	}
 
 	_, foundInBase := data.baseData.getNodeInfo(nodeName)
@@ -202,7 +203,7 @@ func (data *internalDeltaSnapshotData) removeNodeInfo(nodeName string) error {
 
 	if !foundInBase && !foundInDelta {
 		// Node not found in the chain.
-		return ErrNodeNotFound
+		return clustersnapshot.ErrNodeNotFound
 	}
 
 	// Maybe consider deleting from the lists instead. Maybe not.
@@ -230,7 +231,7 @@ func (data *internalDeltaSnapshotData) nodeInfoToModify(nodeName string) (*sched
 func (data *internalDeltaSnapshotData) addPod(pod *apiv1.Pod, nodeName string) error {
 	ni, found := data.nodeInfoToModify(nodeName)
 	if !found {
-		return ErrNodeNotFound
+		return clustersnapshot.ErrNodeNotFound
 	}
 
 	ni.AddPod(pod)
@@ -246,7 +247,7 @@ func (data *internalDeltaSnapshotData) removePod(namespace, name, nodeName strin
 	// probably means things are very bad anyway.
 	ni, found := data.nodeInfoToModify(nodeName)
 	if !found {
-		return ErrNodeNotFound
+		return clustersnapshot.ErrNodeNotFound
 	}
 
 	podFound := false
@@ -359,61 +360,68 @@ func (snapshot *deltaSnapshotNodeLister) HavePodsWithRequiredAntiAffinityList() 
 
 // Get returns node info by node name.
 func (snapshot *deltaSnapshotNodeLister) Get(nodeName string) (*schedulerframework.NodeInfo, error) {
-	return (*DeltaClusterSnapshot)(snapshot).getNodeInfo(nodeName)
+	return (*DeltaSnapshotBase)(snapshot).getNodeInfo(nodeName)
 }
 
 // IsPVCUsedByPods returns if PVC is used by pods
 func (snapshot *deltaSnapshotStorageLister) IsPVCUsedByPods(key string) bool {
-	return (*DeltaClusterSnapshot)(snapshot).IsPVCUsedByPods(key)
+	return (*DeltaSnapshotBase)(snapshot).IsPVCUsedByPods(key)
 }
 
-func (snapshot *DeltaClusterSnapshot) getNodeInfo(nodeName string) (*schedulerframework.NodeInfo, error) {
+func (snapshot *DeltaSnapshotBase) getNodeInfo(nodeName string) (*schedulerframework.NodeInfo, error) {
 	data := snapshot.data
 	node, found := data.getNodeInfo(nodeName)
 	if !found {
-		return nil, ErrNodeNotFound
+		return nil, clustersnapshot.ErrNodeNotFound
 	}
 	return node, nil
 }
 
 // NodeInfos returns node lister.
-func (snapshot *DeltaClusterSnapshot) NodeInfos() schedulerframework.NodeInfoLister {
+func (snapshot *DeltaSnapshotBase) NodeInfos() schedulerframework.NodeInfoLister {
 	return (*deltaSnapshotNodeLister)(snapshot)
 }
 
 // StorageInfos returns storage lister
-func (snapshot *DeltaClusterSnapshot) StorageInfos() schedulerframework.StorageInfoLister {
+func (snapshot *DeltaSnapshotBase) StorageInfos() schedulerframework.StorageInfoLister {
 	return (*deltaSnapshotStorageLister)(snapshot)
 }
 
-// NewDeltaClusterSnapshot creates instances of DeltaClusterSnapshot.
-func NewDeltaClusterSnapshot() *DeltaClusterSnapshot {
-	snapshot := &DeltaClusterSnapshot{}
+// ResourceClaims exposes snapshot as ResourceClaimTracker
+func (snapshot *DeltaSnapshotBase) ResourceClaims() schedulerframework.ResourceClaimTracker {
+	return snapshot.DraSnapshot().ResourceClaims()
+
+}
+
+// ResourceSlices exposes snapshot as ResourceSliceLister.
+func (snapshot *DeltaSnapshotBase) ResourceSlices() schedulerframework.ResourceSliceLister {
+	return snapshot.DraSnapshot().ResourceSlices()
+}
+
+// DeviceClasses exposes the snapshot as DeviceClassLister.
+func (snapshot *DeltaSnapshotBase) DeviceClasses() schedulerframework.DeviceClassLister {
+	return snapshot.DraSnapshot().DeviceClasses()
+}
+
+// NewDeltaSnapshotBase creates instances of DeltaSnapshotBase.
+func NewDeltaSnapshotBase() *DeltaSnapshotBase {
+	snapshot := &DeltaSnapshotBase{}
 	snapshot.clear()
 	return snapshot
 }
 
-// GetNodeInfo gets a NodeInfo.
-func (snapshot *DeltaClusterSnapshot) GetNodeInfo(nodeName string) (*framework.NodeInfo, error) {
-	schedNodeInfo, err := snapshot.getNodeInfo(nodeName)
-	if err != nil {
-		return nil, err
-	}
-	return framework.WrapSchedulerNodeInfo(schedNodeInfo), nil
+// DraSnapshot returns the DRA snapshot.
+func (snapshot *DeltaSnapshotBase) DraSnapshot() drasnapshot.Snapshot {
+	// TODO(DRA): Return DRA snapshot.
+	return drasnapshot.Snapshot{}
 }
 
-// ListNodeInfos lists NodeInfos.
-func (snapshot *DeltaClusterSnapshot) ListNodeInfos() ([]*framework.NodeInfo, error) {
-	schedNodeInfos := snapshot.data.getNodeInfoList()
-	return framework.WrapSchedulerNodeInfos(schedNodeInfos), nil
-}
-
-// AddNodeInfo adds a NodeInfo.
-func (snapshot *DeltaClusterSnapshot) AddNodeInfo(nodeInfo *framework.NodeInfo) error {
+// AddSchedulerNodeInfo adds a NodeInfo.
+func (snapshot *DeltaSnapshotBase) AddSchedulerNodeInfo(nodeInfo *schedulerframework.NodeInfo) error {
 	if err := snapshot.data.addNode(nodeInfo.Node()); err != nil {
 		return err
 	}
-	for _, podInfo := range nodeInfo.Pods() {
+	for _, podInfo := range nodeInfo.Pods {
 		if err := snapshot.data.addPod(podInfo.Pod, nodeInfo.Node().Name); err != nil {
 			return err
 		}
@@ -422,7 +430,7 @@ func (snapshot *DeltaClusterSnapshot) AddNodeInfo(nodeInfo *framework.NodeInfo) 
 }
 
 // SetClusterState sets the cluster state.
-func (snapshot *DeltaClusterSnapshot) SetClusterState(nodes []*apiv1.Node, scheduledPods []*apiv1.Pod) error {
+func (snapshot *DeltaSnapshotBase) SetClusterState(nodes []*apiv1.Node, scheduledPods []*apiv1.Pod, draSnapshot drasnapshot.Snapshot) error {
 	snapshot.clear()
 
 	knownNodes := make(map[string]bool)
@@ -439,38 +447,39 @@ func (snapshot *DeltaClusterSnapshot) SetClusterState(nodes []*apiv1.Node, sched
 			}
 		}
 	}
+	// TODO(DRA): Save DRA snapshot.
 	return nil
 }
 
-// RemoveNodeInfo removes nodes (and pods scheduled to it) from the snapshot.
-func (snapshot *DeltaClusterSnapshot) RemoveNodeInfo(nodeName string) error {
+// RemoveSchedulerNodeInfo removes nodes (and pods scheduled to it) from the snapshot.
+func (snapshot *DeltaSnapshotBase) RemoveSchedulerNodeInfo(nodeName string) error {
 	return snapshot.data.removeNodeInfo(nodeName)
 }
 
 // ForceAddPod adds pod to the snapshot and schedules it to given node.
-func (snapshot *DeltaClusterSnapshot) ForceAddPod(pod *apiv1.Pod, nodeName string) error {
+func (snapshot *DeltaSnapshotBase) ForceAddPod(pod *apiv1.Pod, nodeName string) error {
 	return snapshot.data.addPod(pod, nodeName)
 }
 
 // ForceRemovePod removes pod from the snapshot.
-func (snapshot *DeltaClusterSnapshot) ForceRemovePod(namespace, podName, nodeName string) error {
+func (snapshot *DeltaSnapshotBase) ForceRemovePod(namespace, podName, nodeName string) error {
 	return snapshot.data.removePod(namespace, podName, nodeName)
 }
 
 // IsPVCUsedByPods returns if the pvc is used by any pod
-func (snapshot *DeltaClusterSnapshot) IsPVCUsedByPods(key string) bool {
+func (snapshot *DeltaSnapshotBase) IsPVCUsedByPods(key string) bool {
 	return snapshot.data.isPVCUsedByPods(key)
 }
 
 // Fork creates a fork of snapshot state. All modifications can later be reverted to moment of forking via Revert()
 // Time: O(1)
-func (snapshot *DeltaClusterSnapshot) Fork() {
+func (snapshot *DeltaSnapshotBase) Fork() {
 	snapshot.data = snapshot.data.fork()
 }
 
 // Revert reverts snapshot state to moment of forking.
 // Time: O(1)
-func (snapshot *DeltaClusterSnapshot) Revert() {
+func (snapshot *DeltaSnapshotBase) Revert() {
 	if snapshot.data.baseData != nil {
 		snapshot.data = snapshot.data.baseData
 	}
@@ -478,7 +487,7 @@ func (snapshot *DeltaClusterSnapshot) Revert() {
 
 // Commit commits changes done after forking.
 // Time: O(n), where n = size of delta (number of nodes added, modified or deleted since forking)
-func (snapshot *DeltaClusterSnapshot) Commit() error {
+func (snapshot *DeltaSnapshotBase) Commit() error {
 	newData, err := snapshot.data.commit()
 	if err != nil {
 		return err
@@ -489,6 +498,6 @@ func (snapshot *DeltaClusterSnapshot) Commit() error {
 
 // Clear reset cluster snapshot to empty, unforked state
 // Time: O(1)
-func (snapshot *DeltaClusterSnapshot) clear() {
+func (snapshot *DeltaSnapshotBase) clear() {
 	snapshot.data = newInternalDeltaSnapshotData()
 }

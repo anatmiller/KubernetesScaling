@@ -31,7 +31,7 @@ import (
 
 	apiv1 "k8s.io/api/core/v1"
 	kube_util "k8s.io/autoscaler/cluster-autoscaler/utils/kubernetes"
-	klog "k8s.io/klog/v2"
+	"k8s.io/klog/v2"
 )
 
 const (
@@ -139,7 +139,7 @@ func (c *Checker) unremovableReasonAndNodeUtilization(context *context.Autoscali
 	}
 
 	gpuConfig := context.CloudProvider.GetNodeGpuConfig(node)
-	utilInfo, err := utilization.Calculate(nodeInfo, ignoreDaemonSetsUtilization, context.IgnoreMirrorPodsUtilization, gpuConfig, timestamp)
+	utilInfo, err := utilization.Calculate(nodeInfo, ignoreDaemonSetsUtilization, context.IgnoreMirrorPodsUtilization, context.DynamicResourceAllocationEnabled, gpuConfig, timestamp)
 	if err != nil {
 		klog.Warningf("Failed to calculate utilization for %s: %v", node.Name, err)
 	}
