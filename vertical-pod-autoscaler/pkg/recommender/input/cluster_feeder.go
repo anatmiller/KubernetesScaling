@@ -68,6 +68,9 @@ type ClusterStateFeeder interface {
 	// LoadPods updates clusterState with current specification of Pods and their Containers.
 	LoadPods()
 
+	// PruneContainers removes any containers from the cluster state that are no longer present in pods.
+	PruneContainers()
+
 	// LoadRealTimeMetrics updates clusterState with current usage metrics of containers.
 	LoadRealTimeMetrics()
 
@@ -290,7 +293,7 @@ func (feeder *clusterStateFeeder) GarbageCollectCheckpoints() {
 		}
 		for _, checkpoint := range checkpointList.Items {
 			vpaID := model.VpaID{Namespace: checkpoint.Namespace, VpaName: checkpoint.Spec.VPAObjectName}
-			_, exists := feeder.clusterState.Vpas[vpaID]
+			vpa, exists := feeder.clusterState.Vpas[vpaID]
 			if !exists {
 				err = feeder.vpaCheckpointClient.VerticalPodAutoscalerCheckpoints(namespace).Delete(context.TODO(), checkpoint.Name, metav1.DeleteOptions{})
 				if err == nil {
@@ -299,6 +302,21 @@ func (feeder *clusterStateFeeder) GarbageCollectCheckpoints() {
 					klog.ErrorS(err, "Orphaned VPA checkpoint cleanup - error deleting", klog.KRef(namespace, checkpoint.Name))
 				}
 			}
+			// Also clean up a checkpoint if the VPA is still there, but the container is gone. AggregateStateByContainerName
+			// merges in the initial aggregates so we can use it to check "both lists" (initial, aggregates) at once
+			// TODO(jkyros): could we also just wait until it got "old" enough, e.g. the checkpoint hasn't
+			// been updated for an hour, blow it a away? Because once we remove it from the aggregate lists, it will stop
+			// being maintained.
+			_, aggregateExists := vpa.AggregateStateByContainerName()[checkpoint.Spec.ContainerName]
+			if !aggregateExists {
+				err = feeder.vpaCheckpointClient.VerticalPodAutoscalerCheckpoints(namespace).Delete(context.TODO(), checkpoint.Name, metav1.DeleteOptions{})
+				if err == nil {
+					klog.V(3).Infof("Orphaned VPA checkpoint cleanup - deleting %v/%v.", namespace, checkpoint.Name)
+				} else {
+					klog.Errorf("Cannot delete VPA checkpoint %v/%v. Reason: %+v", namespace, checkpoint.Name, err)
+				}
+			}
+
 		}
 	}
 }
@@ -423,6 +441,77 @@ func (feeder *clusterStateFeeder) LoadPods() {
 			}
 		}
 	}
+}
+
+// PruneContainers prunes any containers from the intial aggregate states
+// that are no longer present in the aggregate states. This is important
+// for cases where a container has been renamed or removed, as otherwise
+// the VPA will split the recommended resources across containers that
+// are no longer present, resulting in the containers that are still
+// present being under-resourced
+func (feeder *clusterStateFeeder) PruneContainers2() {
+
+	var keysPruned int
+	// Look through all of our VPAs
+	for _, vpa := range feeder.clusterState.Vpas {
+		// TODO(jkyros): maybe vpa.PruneInitialAggregateContainerStates() ?
+		aggregates := vpa.AggregateStateByContainerNameWithoutCheckpoints()
+		// Check each initial state to see if it's still "real"
+		for container := range vpa.ContainersInitialAggregateState {
+			if _, ok := aggregates[container]; !ok {
+				delete(vpa.ContainersInitialAggregateState, container)
+				keysPruned = keysPruned + 1
+
+			}
+		}
+	}
+	if keysPruned > 0 {
+		klog.Infof("Pruned %d stale initial aggregate container keys", keysPruned)
+	}
+}
+
+// PruneContainers removes any containers from the aggregates and initial aggregates that are no longer
+// present in the feeder's clusterState. Without this, we would be averaging our resource calculations
+// over containers that no longer exist, and continuing to update checkpoints that should be left to expire.
+func (feeder *clusterStateFeeder) PruneContainers() {
+
+	// Find all the containers that are still legitimately in pods
+	containersInPods := make(map[string]string)
+	for _, pod := range feeder.clusterState.Pods {
+		for containerID, _ := range pod.Containers {
+			containersInPods[containerID] = pod.ID.PodName
+		}
+	}
+
+	var aggregatesPruned int
+	var initialAggregatesPruned int
+	for _, vpa := range feeder.clusterState.Vpas {
+		// Look at the aggregates
+		for container := range vpa.AggregateContainerStates() {
+			// If the container being aggregated isn't in a pod anymore according to the state, remove it
+			if _, ok := containersInPods[container.ContainerName()]; !ok {
+				klog.V(4).Infof("Deleting Aggregate container %s, not present in any pods", container.ContainerName())
+				vpa.DeleteAggregation(container)
+				aggregatesPruned = aggregatesPruned + 1
+			}
+
+		}
+		// Also remove it from the initial aggregates. This is done separately from the normal aggregates because it
+		// could be in this list, but not that list and vice versa
+		for container := range vpa.ContainersInitialAggregateState {
+			if _, ok := containersInPods[container]; !ok {
+				klog.V(4).Infof("Deleting Initial Aggregate container %s, not present in any pods", container)
+				delete(vpa.ContainersInitialAggregateState, container)
+				initialAggregatesPruned = initialAggregatesPruned + 1
+
+			}
+		}
+	}
+	// Only log if we did something
+	if initialAggregatesPruned > 0 || aggregatesPruned > 0 {
+		klog.Infof("Pruned %d aggregate and %d initial aggregate containers", aggregatesPruned, initialAggregatesPruned)
+	}
+
 }
 
 func (feeder *clusterStateFeeder) LoadRealTimeMetrics() {
