@@ -9,6 +9,7 @@ reviewers:
 - BigDarkClown
 - feiskyer
 - vadasambar
+- Shubham82
 - x13n
 labels:
 - area/cluster-autoscaler
