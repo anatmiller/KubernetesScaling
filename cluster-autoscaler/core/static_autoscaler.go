@@ -48,11 +48,9 @@ import (
 	"k8s.io/autoscaler/cluster-autoscaler/simulator/drainability/rules"
 	"k8s.io/autoscaler/cluster-autoscaler/simulator/framework"
 	"k8s.io/autoscaler/cluster-autoscaler/simulator/options"
-	"k8s.io/autoscaler/cluster-autoscaler/simulator/predicatechecker"
 	"k8s.io/autoscaler/cluster-autoscaler/utils/backoff"
 	caerrors "k8s.io/autoscaler/cluster-autoscaler/utils/errors"
 	kube_util "k8s.io/autoscaler/cluster-autoscaler/utils/kubernetes"
-	scheduler_utils "k8s.io/autoscaler/cluster-autoscaler/utils/scheduler"
 	"k8s.io/autoscaler/cluster-autoscaler/utils/taints"
 	"k8s.io/utils/integer"
 
@@ -132,7 +130,7 @@ func (callbacks *staticAutoscalerProcessorCallbacks) reset() {
 // NewStaticAutoscaler creates an instance of Autoscaler filled with provided parameters
 func NewStaticAutoscaler(
 	opts config.AutoscalingOptions,
-	predicateChecker predicatechecker.PredicateChecker,
+	fwHandle *framework.Handle,
 	clusterSnapshot clustersnapshot.ClusterSnapshot,
 	autoscalingKubeClients *context.AutoscalingKubeClients,
 	processors *ca_processors.AutoscalingProcessors,
@@ -155,7 +153,7 @@ func NewStaticAutoscaler(
 	processorCallbacks := newStaticAutoscalerProcessorCallbacks()
 	autoscalingContext := context.NewAutoscalingContext(
 		opts,
-		predicateChecker,
+		fwHandle,
 		clusterSnapshot,
 		autoscalingKubeClients,
 		cloudProvider,
@@ -1028,7 +1026,7 @@ func getUpcomingNodeInfos(upcomingCounts map[string]int, nodeInfos map[string]*f
 			// Ensure new nodes have different names because nodeName
 			// will be used as a map key. Also deep copy pods (daemonsets &
 			// any pods added by cloud provider on template).
-			nodes = append(nodes, scheduler_utils.DeepCopyTemplateNode(nodeTemplate, fmt.Sprintf("upcoming-%d", i)))
+			nodes = append(nodes, simulator.FreshNodeInfoFromTemplateNodeInfo(nodeTemplate, fmt.Sprintf("upcoming-%d", i)))
 		}
 		upcomingNodes[nodeGroup] = nodes
 	}
