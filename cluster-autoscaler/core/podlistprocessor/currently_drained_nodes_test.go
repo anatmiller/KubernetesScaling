@@ -26,6 +26,7 @@ import (
 	"k8s.io/autoscaler/cluster-autoscaler/core/scaledown"
 	"k8s.io/autoscaler/cluster-autoscaler/core/scaledown/status"
 	"k8s.io/autoscaler/cluster-autoscaler/simulator/clustersnapshot"
+	"k8s.io/autoscaler/cluster-autoscaler/simulator/clustersnapshot/testsnapshot"
 	"k8s.io/autoscaler/cluster-autoscaler/utils/errors"
 	. "k8s.io/autoscaler/cluster-autoscaler/utils/test"
 )
@@ -194,7 +195,7 @@ func TestCurrentlyDrainedNodesPodListProcessor(t *testing.T) {
 			name:         "single node, non-recreatable pods filtered out",
 			drainedNodes: []string{"n"},
 			nodes: []*apiv1.Node{
-				BuildTestNode("n", 1000, 10),
+				BuildTestNode("n", 2000, 10),
 			},
 			pods: []*apiv1.Pod{
 				BuildScheduledTestPod("p1", 100, 1, "n"),
@@ -229,11 +230,11 @@ func TestCurrentlyDrainedNodesPodListProcessor(t *testing.T) {
 			name:         "everything works together",
 			drainedNodes: []string{"n1", "n3", "n5"},
 			nodes: []*apiv1.Node{
-				BuildTestNode("n1", 1000, 10),
-				BuildTestNode("n2", 1000, 10),
-				BuildTestNode("n3", 1000, 10),
-				BuildTestNode("n4", 1000, 10),
-				BuildTestNode("n5", 1000, 10),
+				BuildTestNode("n1", 3000, 10),
+				BuildTestNode("n2", 3000, 10),
+				BuildTestNode("n3", 3000, 10),
+				BuildTestNode("n4", 3000, 10),
+				BuildTestNode("n5", 3000, 10),
 			},
 			pods: []*apiv1.Pod{
 				BuildScheduledTestPod("p1", 100, 1, "n1"),
@@ -267,7 +268,7 @@ func TestCurrentlyDrainedNodesPodListProcessor(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx := context.AutoscalingContext{
 				ScaleDownActuator: &mockActuator{&mockActuationStatus{tc.drainedNodes}},
-				ClusterSnapshot:   clustersnapshot.NewBasicClusterSnapshot(),
+				ClusterSnapshot:   testsnapshot.NewTestSnapshotOrDie(t),
 			}
 			clustersnapshot.InitializeClusterSnapshotOrDie(t, ctx.ClusterSnapshot, tc.nodes, tc.pods)
 
